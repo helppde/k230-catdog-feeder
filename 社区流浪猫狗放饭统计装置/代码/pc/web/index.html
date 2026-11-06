@@ -1,0 +1,555 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>流浪猫狗放饭 · 到访统计</title>
+<style>
+  :root{
+    --bg:#0e1116; --panel:#161b22; --panel2:#1c232c; --line:#252d38;
+    --txt:#e6edf3; --dim:#8b98a9; --cat:#f5b942; --dog:#6fb3ff;
+    --accent:#ff8a5b; --ok:#3fb950; --bad:#f85149;
+    --radius:14px;
+  }
+  *{box-sizing:border-box}
+  body{
+    margin:0; background:
+      radial-gradient(1200px 600px at 15% -10%, #1b2431 0%, transparent 60%),
+      radial-gradient(900px 500px at 90% 0%, #211a24 0%, transparent 55%),
+      var(--bg);
+    color:var(--txt);
+    font:14px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI","Microsoft YaHei",system-ui,sans-serif;
+    min-height:100vh;
+  }
+  header{
+    display:flex; align-items:center; justify-content:space-between; gap:16px;
+    padding:22px 28px 14px; flex-wrap:wrap;
+  }
+  .brand{font-size:20px; font-weight:700; letter-spacing:.3px}
+  .brand span{color:var(--accent)}
+  .status{display:flex; align-items:center; gap:8px; color:var(--dim); font-size:13px}
+  .dot{width:9px; height:9px; border-radius:50%; background:var(--bad); box-shadow:0 0 0 4px rgba(248,81,73,.12)}
+  .dot.on{background:var(--ok); box-shadow:0 0 0 4px rgba(63,185,80,.12)}
+  main{padding:0 28px 48px; max-width:1360px; margin:0 auto}
+
+  .stats{display:grid; grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); gap:14px; margin-bottom:16px}
+  .card{
+    background:linear-gradient(180deg,var(--panel) 0%, var(--panel2) 100%);
+    border:1px solid var(--line); border-radius:var(--radius);
+    padding:16px 18px; position:relative; overflow:hidden;
+  }
+  .card .k{color:var(--dim); font-size:12.5px; letter-spacing:.4px}
+  .card .v{font-size:30px; font-weight:700; margin-top:6px; font-variant-numeric:tabular-nums}
+  .card .sub{color:var(--dim); font-size:12px; margin-top:2px}
+  .card::after{content:""; position:absolute; inset:auto 0 0 0; height:3px; background:var(--c,transparent); opacity:.85}
+
+  .row{display:grid; grid-template-columns:1.55fr 1fr; gap:14px; margin-bottom:16px}
+  @media(max-width:900px){ .row{grid-template-columns:1fr} }
+
+  .panel{
+    background:var(--panel); border:1px solid var(--line);
+    border-radius:var(--radius); padding:18px 20px;
+  }
+  .panel h2{
+    font-size:14px; margin:0 0 14px; color:var(--txt); font-weight:600;
+    display:flex; align-items:center; justify-content:space-between;
+  }
+  .panel h2 small{color:var(--dim); font-weight:400; font-size:12px}
+
+  /* ---- 24 小时柱状图 ---- */
+  .chart{display:flex; align-items:flex-end; gap:5px; height:170px; padding-top:6px}
+  .col{flex:1; display:flex; flex-direction:column; justify-content:flex-end; align-items:center; gap:2px; height:100%}
+  .bars{flex:1; display:flex; align-items:flex-end; gap:1px; width:100%; justify-content:center}
+  .bar{width:46%; max-width:14px; border-radius:3px 3px 0 0; min-height:0; transition:height .35s ease}
+  .bar.cat{background:linear-gradient(180deg,#ffd479,var(--cat))}
+  .bar.dog{background:linear-gradient(180deg,#9fd0ff,var(--dog))}
+  .col .h{color:var(--dim); font-size:10px; font-variant-numeric:tabular-nums}
+  .legend{display:flex; gap:16px; color:var(--dim); font-size:12px; margin-top:10px}
+  .legend i{display:inline-block; width:9px; height:9px; border-radius:2px; margin-right:5px}
+
+  /* ---- 时段 ---- */
+  .periods{display:flex; flex-direction:column; gap:9px}
+  .prow{display:grid; grid-template-columns:52px 1fr 34px; gap:10px; align-items:center; font-size:13px}
+  .prow .lbl{color:var(--dim)}
+  .ptrack{height:9px; background:#0b0f14; border-radius:6px; overflow:hidden; display:flex}
+  .ptrack i{display:block; height:100%}
+  .ptrack i.cat{background:var(--cat)}
+  .ptrack i.dog{background:var(--dog)}
+  .prow .n{text-align:right; font-variant-numeric:tabular-nums; color:var(--dim)}
+
+  /* ---- 个体 ---- */
+  .grid{display:grid; grid-template-columns:repeat(auto-fill,minmax(230px,1fr)); gap:12px}
+  .ind{
+    background:var(--panel2); border:1px solid var(--line); border-radius:12px;
+    overflow:hidden; display:flex; flex-direction:column;
+  }
+  .ind .pic{height:132px; background:#0b0f14 center/cover no-repeat; cursor:zoom-in; position:relative}
+  .ind .pic .badge{
+    position:absolute; left:8px; top:8px; font-size:11px; padding:2px 8px;
+    border-radius:20px; background:rgba(0,0,0,.55); backdrop-filter:blur(4px);
+  }
+  .ind .body{padding:10px 12px 12px; display:flex; flex-direction:column; gap:6px}
+  .ind .name{font-weight:600; font-size:14.5px; display:flex; align-items:center; gap:6px; cursor:text}
+  .ind .name:hover{color:var(--accent)}
+  .ind .meta{color:var(--dim); font-size:12px; display:flex; justify-content:space-between}
+  .ind .num{font-size:22px; font-weight:700; font-variant-numeric:tabular-nums}
+  .ind .actions{display:flex; gap:6px; margin-top:2px}
+  button{
+    font:inherit; font-size:12px; color:var(--txt); background:#222b36;
+    border:1px solid var(--line); border-radius:8px; padding:5px 10px; cursor:pointer;
+    transition:.15s;
+  }
+  button:hover{background:#2b3746; border-color:#3a4757}
+  button.primary{background:var(--accent); border-color:var(--accent); color:#241203; font-weight:600}
+  button.primary:hover{filter:brightness(1.08)}
+
+  /* ---- 最近到访 ---- */
+  .list{display:flex; flex-direction:column; gap:1px}
+  .vrow{
+    display:grid; grid-template-columns:56px 1fr auto auto; gap:12px; align-items:center;
+    padding:7px 4px; border-bottom:1px solid #1b222b;
+  }
+  .vrow:last-child{border-bottom:none}
+  .vrow img{width:56px; height:42px; object-fit:cover; border-radius:7px; background:#0b0f14}
+  .vrow .who b{font-weight:600}
+  .vrow .who span{color:var(--dim); font-size:12px; margin-left:8px}
+  .vrow .t{color:var(--dim); font-size:12.5px; font-variant-numeric:tabular-nums}
+
+  /* ---- 「是哪只」 ---- */
+  .who .nm{font-weight:700; font-size:14px; display:inline-flex; align-items:center; gap:6px}
+  .who .nm.cat{color:var(--cat)}
+  .who .nm.dog{color:var(--dog)}
+  .who .nm.unknown{color:var(--dim); font-weight:500}
+  .who .nm[data-i]{cursor:pointer; border-bottom:1px dashed transparent}
+  .who .nm[data-i]:hover{border-bottom-color:currentColor}
+  .who .line{color:var(--dim); font-size:12px; margin-top:1px; display:flex; align-items:center; flex-wrap:wrap; gap:5px}
+  .simbar{display:inline-block; width:46px; height:5px; background:#0b0f14; border-radius:3px; overflow:hidden}
+  .simbar i{display:block; height:100%; border-radius:3px; background:linear-gradient(90deg,#3fb950,#8b5cf6)}
+  .tagnew{font-size:10.5px; padding:0 7px; border-radius:20px; border:1px solid rgba(255,138,91,.45); color:var(--accent); background:rgba(255,138,91,.1)}
+
+  /* ---- 个体相册 ---- */
+  .gal{display:grid; grid-template-columns:repeat(auto-fill,minmax(118px,1fr)); gap:8px; max-height:54vh; overflow:auto; padding-right:2px}
+  .gitem{border-radius:10px; overflow:hidden; background:#0b0f14; border:1px solid var(--line); cursor:zoom-in; transition:.15s}
+  .gitem:hover{border-color:#3a4757; transform:translateY(-1px)}
+  .gitem img{width:100%; height:86px; object-fit:cover; display:block}
+  .gitem .cap{font-size:11px; color:var(--dim); padding:4px 6px; display:flex; justify-content:space-between; gap:4px}
+  .gitem .cap b{color:var(--txt); font-weight:600; font-variant-numeric:tabular-nums}
+  .galhead{display:flex; gap:14px; align-items:center; margin:2px 0 12px}
+  .galhead .cover{width:62px; height:62px; border-radius:10px; background:#0b0f14 center/cover no-repeat; border:1px solid var(--line); flex:0 0 auto}
+  .galhead .k{font-size:12px; color:var(--dim)}
+  .galhead .n{font-size:15px; font-weight:700}
+
+  @media(max-width:640px){
+    /* 手机上"多久以前"藏掉 —— 上面那行已经有具体时间了 */
+    .vrow{grid-template-columns:50px 1fr auto; gap:10px}
+    .vrow .t{display:none}
+    .vrow img{width:50px; height:38px}
+    .ind .actions{flex-wrap:wrap}
+  }
+  .pill{font-size:11px; padding:1px 8px; border-radius:20px; border:1px solid var(--line); color:var(--dim)}
+  .pill.cat{color:var(--cat); border-color:rgba(245,185,66,.35); background:rgba(245,185,66,.09)}
+  .pill.dog{color:var(--dog); border-color:rgba(111,179,255,.35); background:rgba(111,179,255,.09)}
+  .empty{color:var(--dim); padding:26px 0; text-align:center; font-size:13px}
+
+  /* ---- 弹层 ---- */
+  #modal{
+    position:fixed; inset:0; background:rgba(6,9,13,.78); display:none;
+    align-items:center; justify-content:center; z-index:50; padding:20px;
+  }
+  #modal.on{display:flex}
+  .modal-box{
+    background:var(--panel); border:1px solid var(--line); border-radius:16px;
+    padding:22px; width:min(520px,100%); max-height:82vh; overflow:auto;
+  }
+  .modal-box h3{margin:0 0 4px; font-size:16px}
+  .modal-box p{color:var(--dim); font-size:13px; margin:0 0 14px}
+  .pick{
+    display:flex; align-items:center; gap:10px; padding:8px; border-radius:10px;
+    cursor:pointer; border:1px solid transparent;
+  }
+  .pick:hover{background:var(--panel2); border-color:var(--line)}
+  .pick img{width:44px; height:44px; object-fit:cover; border-radius:8px; background:#0b0f14}
+  .pick .grow{flex:1}
+  .pick .grow b{display:block; font-size:13.5px}
+  .pick .grow span{color:var(--dim); font-size:12px}
+  #lightbox{position:fixed; inset:0; background:rgba(0,0,0,.9); display:none; align-items:center; justify-content:center; z-index:60; cursor:zoom-out}
+  #lightbox.on{display:flex}
+  #lightbox img{max-width:92vw; max-height:92vh; border-radius:10px}
+  .foot{color:var(--dim); font-size:12px; text-align:center; margin-top:22px}
+</style>
+</head>
+<body>
+<header>
+  <div class="brand">🐾 流浪猫狗放饭 · <span>到访统计</span></div>
+  <div class="status">
+    <span class="dot" id="dot"></span>
+    <span id="statusText">连接中…</span>
+  </div>
+</header>
+
+<main>
+  <section class="stats" id="stats"></section>
+
+  <section class="row">
+    <div class="panel">
+      <h2>24 小时到访分布 <small>全部历史 · 按小时</small></h2>
+      <div class="chart" id="chart"></div>
+      <div class="legend">
+        <span><i style="background:var(--cat)"></i>猫</span>
+        <span><i style="background:var(--dog)"></i>狗</span>
+      </div>
+    </div>
+    <div class="panel">
+      <h2>时段汇总 <small>什么时候来得多</small></h2>
+      <div class="periods" id="periods"></div>
+    </div>
+  </section>
+
+  <section class="panel" style="margin-bottom:16px">
+    <h2>个体 <small id="indHint">点卡片看这只的全部照片 · 点名字可改名 · 点"合并"把认错的两只并成一只</small></h2>
+    <div class="grid" id="individuals"></div>
+    <div class="empty" id="indEmpty" style="display:none">还没有记录，等第一只猫/狗来吧</div>
+  </section>
+
+  <section class="panel">
+    <h2>最近到访 <small id="recentHint"></small></h2>
+    <div class="list" id="recent"></div>
+  </section>
+
+  <div class="foot">数据每 3 秒自动刷新 · 个体识别阈值 <span id="thr">-</span></div>
+</main>
+
+<div id="modal"><div class="modal-box" id="modalBox"></div></div>
+<div id="lightbox"><img id="lightImg" alt=""></div>
+
+<script>
+const $ = (s) => document.querySelector(s);
+const el = (t, cls, txt) => { const e = document.createElement(t); if (cls) e.className = cls; if (txt != null) e.textContent = txt; return e; };
+
+let DATA = null;
+let inflight = false;
+
+function fmtTime(ts) {
+  if (!ts) return "--";
+  const d = new Date(ts * 1000);
+  const p = (n) => String(n).padStart(2, "0");
+  const now = new Date();
+  const sameDay = d.toDateString() === now.toDateString();
+  const hm = p(d.getHours()) + ":" + p(d.getMinutes());
+  return sameDay ? hm : (p(d.getMonth() + 1) + "/" + p(d.getDate()) + " " + hm);
+}
+function fmtAgo(ts) {
+  if (!ts) return "";
+  const s = Math.max(0, Date.now() / 1000 - ts);
+  if (s < 60) return "刚刚";
+  if (s < 3600) return Math.floor(s / 60) + " 分钟前";
+  if (s < 86400) return Math.floor(s / 3600) + " 小时前";
+  return Math.floor(s / 86400) + " 天前";
+}
+const spName = (s) => (s === "cat" ? "猫" : s === "dog" ? "狗" : "未知");
+
+async function load() {
+  if (inflight) return;
+  inflight = true;
+  try {
+    const r = await fetch("/api/v1/overview", { cache: "no-store" });
+    if (!r.ok) throw new Error("HTTP " + r.status);
+    DATA = await r.json();
+    render();
+    $("#dot").classList.add("on");
+    $("#statusText").textContent = "已连接 · " + new Date().toLocaleTimeString("zh-CN", { hour12: false });
+  } catch (e) {
+    $("#dot").classList.remove("on");
+    $("#statusText").textContent = "服务端没响应（python pc/run.py 跑了吗？）";
+  } finally {
+    inflight = false;
+  }
+}
+
+function render() {
+  if (!DATA) return;
+  const S = DATA.species, I = DATA.individuals_by_species;
+  $("#thr").textContent = DATA.config ? DATA.config.threshold : "-";
+
+  // ---- 概览卡 ----
+  const cards = [
+    { k: "总到访次数", v: DATA.all_time, sub: "所有猫狗加起来", c: "var(--accent)" },
+    { k: "今天到访", v: DATA.today, sub: "从 0 点算起", c: "#8b5cf6" },
+    { k: "猫 / 狗 到访", v: S.cat + " / " + S.dog, sub: "猫 " + (I.cat || 0) + " 只 · 狗 " + (I.dog || 0) + " 只", c: "var(--cat)" },
+    { k: "独立个体", v: (I.cat || 0) + (I.dog || 0), sub: "PC 端自动区分 + 人工纠正", c: "var(--dog)" },
+  ];
+  const st = $("#stats");
+  st.innerHTML = "";
+  cards.forEach(c => {
+    const d = el("div", "card");
+    d.style.setProperty("--c", c.c);
+    d.append(el("div", "k", c.k), el("div", "v", String(c.v)), el("div", "sub", c.sub));
+    st.append(d);
+  });
+
+  // ---- 24h 图 ----
+  const H = DATA.hourly || { cat: [], dog: [] };
+  let max = 1;
+  for (let i = 0; i < 24; i++) max = Math.max(max, (H.cat[i] || 0) + (H.dog[i] || 0));
+  const ch = $("#chart");
+  ch.innerHTML = "";
+  for (let i = 0; i < 24; i++) {
+    const c = H.cat[i] || 0, d = H.dog[i] || 0;
+    const col = el("div", "col");
+    col.title = i + " 点：猫 " + c + " · 狗 " + d;
+    const bars = el("div", "bars");
+    const bc = el("div", "bar cat"); bc.style.height = (c / max * 100) + "%";
+    const bd = el("div", "bar dog"); bd.style.height = (d / max * 100) + "%";
+    if (c) bc.title = "猫 " + c; if (d) bd.title = "狗 " + d;
+    bars.append(bc, bd);
+    col.append(bars, el("div", "h", i % 3 === 0 ? String(i) : ""));
+    ch.append(col);
+  }
+
+  // ---- 时段 ----
+  const ps = $("#periods");
+  ps.innerHTML = "";
+  const periods = DATA.periods || [];
+  let pmax = 1;
+  periods.forEach(p => pmax = Math.max(pmax, p.cat + p.dog));
+  periods.forEach(p => {
+    const tot = p.cat + p.dog + p.unknown;
+    const row = el("div", "prow");
+    const track = el("div", "ptrack");
+    const ci = el("i", "cat"); ci.style.width = (p.cat / pmax * 100) + "%";
+    const di = el("i", "dog"); di.style.width = (p.dog / pmax * 100) + "%";
+    track.append(ci, di);
+    track.title = "猫 " + p.cat + " · 狗 " + p.dog;
+    row.append(el("div", "lbl", p.label), track, el("div", "n", String(tot)));
+    ps.append(row);
+  });
+
+  // ---- 个体 ----
+  const grid = $("#individuals");
+  grid.innerHTML = "";
+  const inds = (DATA.individuals || []).filter(i => i.visits > 0);
+  $("#indEmpty").style.display = inds.length ? "none" : "block";
+  inds.forEach(ind => {
+    const box = el("div", "ind");
+    const pic = el("div", "pic");
+    if (ind.thumb) pic.style.backgroundImage = "url('/img/" + ind.thumb + "')";
+    pic.append(el("span", "badge", spName(ind.species)));
+    pic.title = "点开看这只的全部照片";
+    pic.onclick = () => openGallery(ind);
+    const body = el("div", "body");
+    const name = el("div", "name", ind.name || ("#" + ind.id));
+    name.title = "点击改名";
+    name.onclick = () => rename(ind);
+    body.append(name, el("div", "num", String(ind.visits) + " 次"));
+    body.append(el("div", "meta", "最近 " + fmtAgo(ind.last_seen)));
+    const acts = el("div", "actions");
+    const bGal = el("button", null, "照片 " + ind.visits);
+    bGal.onclick = () => openGallery(ind);
+    bGal.title = "看这只的全部照片";
+    const bMerge = el("button", null, "合并…");
+    bMerge.onclick = () => openMerge(ind);
+    const bRen = el("button", null, "改名");
+    bRen.onclick = () => rename(ind);
+    acts.append(bGal, bRen, bMerge);
+    body.append(acts);
+    box.append(pic, body);
+    grid.append(box);
+  });
+
+  // ---- 最近 ----
+  const rec = $("#recent");
+  rec.innerHTML = "";
+  const vs = DATA.recent || [];
+  $("#recentHint").textContent = vs.length ? "共 " + DATA.all_time + " 条" : "";
+  if (!vs.length) {
+    rec.append(el("div", "empty", "还没有照片，K230 那边检测到猫狗就会传过来"));
+  }
+  const indById = {};
+  (DATA.individuals || []).forEach(i => { indById[i.id] = i; });
+  vs.forEach(v => {
+    const row = el("div", "vrow");
+    const img = document.createElement("img");
+    if (v.thumb) img.src = "/img/" + v.thumb;
+    img.onclick = () => v.image && openLight("/img/" + v.image);
+    row.append(img);
+
+    // ---- 这一行最想一眼看到的东西：这是哪只 ----
+    const who = el("div", "who");
+    const known = !!(v.individual_name && v.individual_id);
+    const nm = el("div", "nm " + (known ? (v.species || "unknown") : "unknown"),
+                  v.individual_name || "未识别");
+    if (known) {
+      nm.dataset.i = v.individual_id;
+      nm.title = "点开看「" + v.individual_name + "」的全部照片";
+      nm.onclick = () => {
+        const ind = indById[v.individual_id];
+        if (ind) openGallery(ind);
+        else openGallery({ id: v.individual_id, name: v.individual_name,
+                           species: v.species, visits: "?", thumb: v.thumb,
+                           first_seen: null, last_seen: v.ts });
+      };
+    } else {
+      nm.title = "这次没匹配到已知个体（首次出现，或相似度低于阈值）";
+    }
+    who.append(nm);
+
+    // 第二行：时间 + 判断依据
+    const line = el("div", "line");
+    line.append(document.createTextNode(fmtTime(v.ts)));
+    const thr = (DATA.config && DATA.config.threshold) || 0.82;
+    if (v.sim != null && v.sim >= 0) {
+      line.append(document.createTextNode("· 相似度 " + v.sim.toFixed(2)));
+      const bar = el("span", "simbar");
+      const fill = el("i");
+      fill.style.width = Math.max(4, Math.min(100, v.sim * 100)) + "%";
+      const weak = v.sim < thr;
+      if (weak) fill.style.background = "linear-gradient(90deg,#f85149,#ff8a5b)";
+      bar.append(fill);
+      line.append(bar);
+      // 只在"这个判断不那么可靠"时才提醒，正常的行不加噪音
+      if (weak) line.append(el("span", "tagnew", "新面孔"));
+    } else if (known) {
+      line.append(el("span", "tagnew", "新面孔"));
+    } else {
+      line.append(document.createTextNode("· 没匹配到个体"));
+    }
+    who.append(line);
+
+    const pill = el("span", "pill " + v.species, spName(v.species));
+    row.append(who, pill, el("div", "t", fmtAgo(v.ts)));
+    rec.append(row);
+  });
+}
+
+// ---------------- 交互 ----------------
+async function post(url, body) {
+  const r = await fetch(url, {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body || {}),
+  });
+  return r.ok;
+}
+
+async function rename(ind) {
+  const n = prompt("给这只「" + spName(ind.species) + "」起个名字（也可以叫「橘猫老大」）：", ind.name || "");
+  if (!n || n.trim() === "" || n === ind.name) return;
+  await post("/api/v1/individual/" + ind.id + "/rename", { name: n.trim() });
+  load();
+}
+
+function openMerge(ind) {
+  const others = (DATA.individuals || []).filter(o => o.id !== ind.id && o.species === ind.species && o.visits > 0);
+  const box = $("#modalBox");
+  box.innerHTML = "";
+  box.append(el("h3", null, "把「" + ind.name + "」合并到……"));
+  box.append(el("p", null, ind.visits + " 次到访会被移到目标个体上，然后这个个体消失。认错了才用。"));
+  if (!others.length) {
+    box.append(el("div", "empty", "同物种还没有别的个体"));
+  }
+  others.forEach(o => {
+    const pick = el("div", "pick");
+    const im = document.createElement("img");
+    if (o.thumb) im.src = "/img/" + o.thumb;
+    const g = el("div", "grow");
+    g.append(el("b", null, o.name), el("span", null, o.visits + " 次 · 最近 " + fmtAgo(o.last_seen)));
+    pick.append(im, g);
+    pick.onclick = async () => {
+      closeModal();
+      await post("/api/v1/individual/" + ind.id + "/merge", { into: o.id });
+      load();
+    };
+    box.append(pick);
+  });
+  const c = el("button", null, "取消");
+  c.style.marginTop = "14px";
+  c.onclick = closeModal;
+  box.append(c);
+  $("#modal").classList.add("on");
+}
+
+// ---------------- 个体相册：这一只是哪只、都什么时候来过 ----------------
+async function openGallery(ind) {
+  const box = $("#modalBox");
+  box.innerHTML = "";
+
+  const head = el("div", "galhead");
+  const cover = el("div", "cover");
+  if (ind.thumb) cover.style.backgroundImage = "url('/img/" + ind.thumb + "')";
+  const info = el("div");
+  info.append(el("div", "n", ind.name || ("#" + ind.id)));
+  const cls = ind.species === "cat" ? "cat" : ind.species === "dog" ? "dog" : "unknown";
+  const nmLine = el("div", "k", spName(ind.species) +
+    " · 共 " + (ind.visits != null ? ind.visits : "?") + " 次到访");
+  nmLine.style.color = cls === "cat" ? "var(--cat)" : cls === "dog" ? "var(--dog)" : "var(--dim)";
+  info.append(nmLine);
+  const when = el("div", "k");
+  when.textContent = (ind.first_seen ? "首次 " + fmtTime(ind.first_seen) + " · " : "") +
+                     (ind.last_seen ? "最近 " + fmtAgo(ind.last_seen) : "");
+  info.append(when);
+  head.append(cover, info);
+  box.append(head);
+
+  const gal = el("div", "gal");
+  gal.append(el("div", "empty", "加载中…"));
+  box.append(gal);
+
+  const c = el("button", null, "关闭");
+  c.style.marginTop = "14px";
+  c.onclick = closeModal;
+  box.append(c);
+  $("#modal").classList.add("on");
+
+  try {
+    const r = await fetch("/api/v1/visits?individual_id=" + encodeURIComponent(ind.id) + "&limit=300",
+                          { cache: "no-store" });
+    if (!r.ok) throw new Error("HTTP " + r.status);
+    const j = await r.json();
+    const list = (j.visits || []).slice().reverse();   // 时间正序，像相册
+    gal.innerHTML = "";
+    if (!list.length) {
+      gal.append(el("div", "empty", "这只还没有照片"));
+      return;
+    }
+    list.forEach(v => {
+      const it = el("div", "gitem");
+      if (v.thumb) {
+        const im = document.createElement("img");
+        im.src = "/img/" + v.thumb;
+        im.loading = "lazy";
+        it.append(im);
+      } else {
+        const ph = el("div", "empty", "无图");
+        ph.style.padding = "30px 0";
+        it.append(ph);
+      }
+      const cap = el("div", "cap");
+      cap.append(el("b", null, fmtTime(v.ts)));
+      cap.append(el("span", null,
+        v.sim != null && v.sim >= 0 ? "相似 " + v.sim.toFixed(2) : "首次"));
+      it.append(cap);
+      it.onclick = () => v.image && openLight("/img/" + v.image);
+      gal.append(it);
+    });
+  } catch (e) {
+    gal.innerHTML = "";
+    gal.append(el("div", "empty", "读取失败：" + e.message));
+  }
+}
+
+function closeModal() { $("#modal").classList.remove("on"); }
+$("#modal").onclick = (e) => { if (e.target.id === "modal") closeModal(); };
+
+function openLight(src) {
+  $("#lightImg").src = src;
+  $("#lightbox").classList.add("on");
+}
+$("#lightbox").onclick = () => $("#lightbox").classList.remove("on");
+document.addEventListener("keydown", e => {
+  if (e.key === "Escape") { closeModal(); $("#lightbox").classList.remove("on"); }
+});
+
+load();
+setInterval(load, 3000);
+</script>
+</body>
+</html>

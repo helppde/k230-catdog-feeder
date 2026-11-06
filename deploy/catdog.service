@@ -1,0 +1,35 @@
+[Unit]
+Description=Stray Cat & Dog Feeder - Web Backend
+# 只要网络起来就能启动（服务器不需要访问外网，所以不写 network-online）
+After=network.target
+
+[Service]
+Type=simple
+User=catdog
+Group=catdog
+WorkingDirectory=/opt/catdog
+
+# token 等敏感配置放这里，别写死在 unit 文件里
+# （unit 文件是全局可读的，token 写进去等于公开）
+EnvironmentFile=/etc/catdog/env
+
+ExecStart=/opt/catdog/.venv/bin/python /opt/catdog/pc/run.py
+
+# 崩了自动拉起。机器重启、OOM 都能自愈。
+Restart=always
+RestartSec=5
+
+# 日志进 journald：journalctl -u catdog -f
+StandardOutput=journal
+StandardError=journal
+
+# ---- 最小权限加固 ----
+NoNewPrivileges=true
+PrivateTmp=true
+# 系统目录只读，唯一可写的是数据目录
+ProtectSystem=full
+ProtectHome=true
+ReadWritePaths=/var/lib/catdog
+
+[Install]
+WantedBy=multi-user.target

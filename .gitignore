@@ -1,0 +1,22 @@
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# 运行日志、数据库备份与 Office 临时锁文件
+*.log
+*.err
+console.out
+*.db.bak_*
+~$*
+
+# 本地编译产物
+*.exe
+
+# 编辑器
+.idea/
+.vscode/
+*.swp
+Thumbs.db
+Desktop.ini

@@ -1,0 +1,179 @@
+## 一、总体运行链路
+
+从现有源码和 README 可以确认，这个项目由三部分组成：
+
+1. **K230 视觉端**：运行 `k230_trigger.py`，用摄像头和 `yolov8n_320.kmodel` 检测猫、狗；检测到动物后，一路通过 GPIO 输出“有动物/无动物”的持续电平，另一路把抓拍照片通过 HTTP 上传到 PC 服务端。
+2. **PC 服务端**：入口是 `pc/run.py`，调用 `server.create_server()` 启动 HTTP 服务；上传请求由 `server.handle_visit()` 处理，照片落盘到 `pc/data/images/日期/`，记录写入 SQLite 的 `pc/data/visits.db`，并通过 `/api/v1/overview` 等接口给网页提供统计数据和图片。
+3. **Arduino 执行板**：README 描述它接收 K230 的 GPIO 电平，自己完成超声波测粮、舵机开门/出粮、步进电机推盆等放食动作。但本次给出的源码中没有 `simple_trigger.ino` 文件，因此执行板只能依据 README 说明，具体固件实现“代码中未体现”。
+
+项目描述中的“检测到后拍照上传网站记录，再通过硬件端放食物”，在源码里的实际关系不是严格串行因果：**K230 检测到动物后即通过 GPIO 反映存在状态，同时按配置上传照片；放食动作由 Arduino 根据 GPIO 电平自行执行，不依赖 PC 上传是否成功**。K230 文件注释也明确说明“K230 只负责如实反映这个状态，不决定放几次饭”。
+
+---
+
+## 二、K230 视觉端：`k230_trigger.py`
+
+### 1. 入口与运行方式
+
+该文件是单文件 MicroPython 程序，文件头说明可拷到 `/sdcard`，用 CanMV IDE 打开后直接运行。入口就是文件顶层配置和后续主流程；但源码在 `_class_ids_from_labels()` 之后被截断，**完整主循环函数名和逐行顺序代码中未展示**。从文件头注释和可见配置可以确认它承担三类职责：
+
+- 识别猫/狗，判断盆边“现在有没有动物”；
+- 用一根 GPIO 实时输出该状态：有动物为高电平，动物离开后拉低；
+- 在有动物期间按配置抓拍并上传 PC。
+
+### 2. 关键配置与输入输出
+
+- **触发引脚**：`TRIG_PIN = 42`，对应亚博 K230 12pin 排针第 1 脚。文件注释强调 `Pin(N)` 的 N 是芯片 GPIO 编号，不是排针序号。
+- **电平语义**：`TRIG_ACTIVE_HIGH = True`，即高电平表示有动物，低电平表示没有。
+- **消抖参数**：
+  - `PRESENCE_ON_FRAMES = 3`：连续 3 帧检测到才认为“来了”；
+  - `PRESENCE_ON_CONF = 0.45`：确认存在时使用的置信度门槛；
+  - `PRESENCE_OFF_MS = 2000`：连续 2 秒未检测到才认为“走了”；
+  - `VISIT_MIN_GAP_MS = 30000`：同一次到访中信号掉落又升起的最小间隔，防止抖动导致重复触发。
+- **可选 BUSY 输入**：`BUSY_PIN = -1` 表示默认不接；若接 Arduino 的忙信号，K230 可等待执行板跑完一轮。注释提醒 Arduino 5V 输出进 K230 3.3V 输入必须分压。
+- **上传节奏**：
+  - `UPLOAD_PER_VISIT = True`：当前配置是“每来一次动物拍一张”，让串口“第 N 次到访”和网页记录尽量一一对应；
+  - `UPLOAD_ONLY_WHEN_PRESENT = True`；
+  - `UPLOAD_INTERVAL_MS = 60000` 仅在 `UPLOAD_PER_VISIT=False` 时作为旧的“每 N 秒一张”模式使用。
+- **模型路径**：`KMODEL_PATH = "/sdcard/kmodel/yolov8n_320.kmodel"`，并给出若干备用路径。模型为 80 类 COCO yolov8n，320×320 输入。
+- **分辨率与显示**：
+  - `RGB888P_SIZE = (640, 480)`，给模型取图；
+  - `DISPLAY_SIZE = (640, 480)`，对应 MIPI 屏；
+  - `DISPLAY_MODE = "lcd"`，`ENABLE_DISPLAY = True`；
+  - 注释说明 PipeLine 会开相机通道，chn0 给屏幕，chn2 给模型 RGB888P 帧。
+- **模拟检测**：`SIMULATE_DETECTION = False`，置 True 时不加载模型，用假猫框跑流程。
+- **卡死自救**：`PIPELINE_TIMEOUT_MS = 45000`、`BOOT_STATE_FILE = "/sdcard/.k230_boot"`、`ENABLE_BOOT_WATCHDOG = True`。注释说明启动前记录本次使用模式，卡死重启后跳过该模式，并用线程监控 `pl.create()` 超时。
+- **类别映射**：`LABELS` 是 COCO 80 类名称；`_class_ids_from_labels()` 按名字反查 `cat`/`dog` 下标，避免换二类模型后仍硬编码 15/16 导致所有结果被过滤。该函数可见，但后续主流程被截断。
+
+### 3. 与项目描述的对应和注意点
+
+- 项目描述“通过摄像头 K230 检测猫狗”：对应模型、`LABELS`、`cat`/`dog` 类别反查、`PRESENCE_ON_CONF` 等配置；实际检测推理代码在主流程截断部分，**具体调用代码未展示**。
+- 项目描述“拍照上传到 PC 网站”：配置中有上传节奏、模型路径、注释提到上传后台线程；但 `SERVER_URL`、具体上传函数、HTTP 请求构造、重试/补传逻辑在当前截断片段中**未展示**。`run.py` 的启动提示说明 K230 端需要配置 `SERVER_URL = "http://局域网IP:端口"`。
+- 文件头 docstring 写“有动物期间，每 60 秒拍一张照上传”，但后面配置说明又改成 `UPLOAD_PER_VISIT=True`“每来一次动物就拍一张”。两者是旧描述和新配置的差异，应以当前配置和注释中的“跟着到访走”为准。
+- README 顶部仍有“K230 只在检测到猫/狗时拉高 800ms”的旧说法；但 `k230_trigger.py` 注释已明确当前是“有动物一直高，动物走了才拉低”的持续电平。审读时应以源码当前语义为准。
+
+---
+
+## 三、PC 服务端：`run.py`、`server.py`、`db.py`、`identity.py`、`config.py`
+
+### 1. 启动入口：`pc/run.py`
+
+`run.py` 是 PC 服务端启动入口：
+
+- 解析 `--host`、`--port`、`--db`、`--log` 参数，默认来自 `config.py`；
+- 调用 `_disable_quickedit()`，避免 Windows 控制台“快速编辑”导致 `print()` 阻塞；
+- 用 `_Tee` 把 stdout/stderr 同时写入日志文件，默认 `pc/data/server.log`，超过 2MB 轮转一次；
+- 调用 `server.create_server(args.host, args.port, args.db)` 创建服务；
+- 打印本机访问地址、局域网地址、数据目录、日志文件，并提示 K230 端应填的 `SERVER_URL`；
+- 最后 `srv.serve_forever()` 进入 HTTP 服务循环，`KeyboardInterrupt` 时关闭服务、关闭 `server.DB`。
+
+### 2. 网络与接口：`server.py`
+
+`server.py` 文件头说明它只用标准库 `http.server + sqlite3 + json`，图像处理用 Pillow，个体识别有 torch 就自动用，没有就退回手工特征。服务端使用 `ThreadingHTTPServer`，数据库写入用锁保护。
+
+已列出的接口包括：
+
+- `POST /api/v1/visit?device=&species=&conf=&box=&ws=&hs=&ts=`：原始 JPEG 放在 body，也支持 multipart/form-data；
+- `GET /api/v1/overview`：网页用的全部数据；
+- `GET /api/v1/visits?limit=50`：最近到访；
+- `POST /api/v1/individual/<id>/rename`：改名；
+- `POST /api/v1/individual/<id>/merge`：合并个体；
+- `POST /api/v1/visit/<id>/assign`：人工把到访改挂到另一个个体；
+- `GET /api/v1/health`；
+- `GET /img/<yyyyMMdd>/<file>.jpg`：访问图片；
+- `GET /`：网页。
+
+注意：`server.py` 在 `_parse_multipart()` 之后被截断，**HTTP 路由分发、`create_server()`、TLS 启动、网页静态文件处理的具体实现未展示**。
+
+### 3. 上传处理：`handle_visit()`
+
+从已展示代码可确认 `handle_visit(raw_body, ctype, query)` 的主要流程：
+
+1. 解析查询参数；若 `Content-Type` 是 `multipart/form-data`，调用 `_parse_multipart()` 拆出文件和字段；
+2. 校验 body 非空、不超过 `MAX_UPLOAD_BYTES`（默认 4MB）、必须是 JPEG（`FF D8`）或 PNG；
+3. 读取 `species`，只接受 `cat`/`dog`，否则记为 `unknown`；读取 `device`、`device_ts`、`box`、`uid`、`backfill`、`conf`；
+4. 若 `backfill=1` 且 `device_ts` 是 2020 年以后的合理时间，则用设备拍照时刻作为入库时间，避免补传旧照片把今天统计冲乱；
+5. 若带 `uid`，先 `DB.find_by_uid(uid)` 去重。K230 超时重传同一张图时，服务端返回已有记录，不再重复入库；
+6. 按日期创建 `PC.IMG_DIR/yyyyMMdd` 目录，用 UUID 命名原图和缩略图，Pillow 解码后保存 JPEG 原图和质量 80 的缩略图，缩略图宽度默认 280；
+7. 调用 `identity.EMBEDDER.embed(rgb)` 提取特征；再调用 `identity.best_match(DB, species, vec)` 在同类个体中找最相似个体；
+8. 若相似度低于 `MATCH_THRESHOLD` 或没有匹配，则 `DB.create_individual(species)` 新建个体；并把本次特征写入 `embeddings`；
+9. 调用 `DB.add_visit(...)` 写入到访记录，包含物种、时间、置信度、框、图片路径、缩略图、相似度、设备、字节数、`uid`、`backfill`；
+10. 返回 JSON，包含 `ok`、`visit_id`、`individual_id`、名称、物种、相似度、是否新个体、到访次数、时间等；
+11. 打印 `[visit] ...` 日志，可用于和 K230 串口日志逐条对照。
+
+### 4. 数据库：`db.py`
+
+SQLite 三张表：
+
+- `individuals`：个体，字段包括 `id`、`species`、`name`、`created_at`、`note`；
+- `visits`：每次到访，字段包括 `individual_id`、`species`、`ts`、`device_ts`、`confidence`、`box`、`image`、`thumb`、`sim`、`device`、`bytes`、`uid`、`backfill`；
+- `embeddings`：个体特征向量，字段包括 `individual_id`、`vec`、`dim`、`created_at`。
+
+`DB.__init__()` 创建目录、连接 SQLite、执行 `_SCHEMA`，再 `_migrate()` 给老库补 `uid` 和 `backfill` 列，并建立 `visits(uid)` 唯一索引。`find_by_uid()` 用于客户端重传去重。`_next_name()` 自动生成类似“猫-01”的名字。`merge_individuals()` 把源个体到访和特征改挂到目标个体，并删除源个体。`db.py` 在 `get_visit()` 等处被截断，**其余查询/统计/删除方法未完整展示**。
+
+### 5. 个体识别：`identity.py`
+
+`identity.py` 完整可见。它把动物照片变成定长向量，再和库中同类个体比较余弦相似度：
+
+- `Embedder.load()` 根据 `config.EMBED_BACKEND = "auto"` 自动选择后端；
+- 若 torch/torchvision 可用，用 ImageNet 预训练 ResNet18，去掉分类层，取 512 维特征；预处理为 Resize 256、CenterCrop 224、ToTensor、Normalize；
+- 否则退回手工特征：转 HSV、缩放到 64×64、4×4 网格，每格 8 个色相直方图（按饱和度加权）加亮度均值/方差，共 `4*4*(8+2)=160` 维；
+- `cosine()` 计算余弦相似度；`best_match()` 在 `db.embeddings_of_species(species)` 中找最大相似度，低于 `PC.MATCH_THRESHOLD` 返回 `None`，否则返回个体 ID 和相似度；
+- 默认 `MATCH_THRESHOLD = 0.82`。注释明确说明单摄像头单张图个体识别不可能 100%，同色同体型猫可能误合并，网页提供合并/改名人工纠正。
+
+### 6. PC 配置：`config.py`
+
+关键配置包括：
+
+- `HOST = "0.0.0.0"`，`PORT = 8000`；
+- `API_TOKEN` 默认空，空表示不校验；公网部署必须设置；
+- 可选 TLS：`TLS_CERT`、`TLS_KEY`；
+- 数据目录 `DATA_DIR = pc/data`，数据库 `visits.db`，图片 `images/`，网页目录 `web/`；
+- `THUMB_WIDTH = 280`，`JPEG_QUALITY = 86`，`MAX_UPLOAD_BYTES = 4MB`；
+- `EMBED_BACKEND = "auto"`，`MATCH_THRESHOLD = 0.82`，`MAX_EMB_PER_INDIVIDUAL = 12`；
+- `SPECIES_NAMES` 和 `PERIODS` 用于网页展示“猫/狗/未知”和时段统计。
+
+---
+
+## 四、执行板与放食动作
+
+本次源码没有提供 `simple_trigger.ino`，以下只能依据 README 说明，不能当作已审读的固件代码：
+
+- K230 排针第 1 脚 GPIO42 接 Arduino D2，触发信号，必须共地；
+- HC-SR04 超声波：VCC 接 5V，TRIG 接 D11，ECHO 接 D12；
+- 舵机1（门）信号接 D3，舵机2（出粮）信号接 D5，电源独立 5V/3A、共地；
+- L298N：IN1→D7、IN2→D8、IN3→D9、IN4→D10，ENA/ENB 不接但跳线帽保留；
+- 可选 BUSY：Arduino D6 输出，跑一轮期间拉高，K230 端 `BUSY_PIN` 接收，需 1k/2k 分压。
+
+README 描述的执行逻辑：
+
+- K230 电平由低变高（上升沿）时，Arduino 跑一轮；
+- 电平一直高时，每 `RE_FEED_WHILE_HIGH_MS = 120000` 即 2 分钟补放一轮；
+- 电平变低后停止补放，等待下一次上升沿；
+- `TRIG_STABLE_MS = 150` 滤毛刺，`MIN_GAP_MS = 30000` 限制两次上升沿最短间隔，`BOOT_GUARD_MS = 5000` 上电保护；
+- 超声波测粮：`FOOD_PRESENT_CM = 12.0`，每次取 `US_SAMPLES = 5` 个样本，有效样本至少 `US_MIN_VALID = 3`，取中位数；测距失败默认放弃整轮，`US_FAIL_FALLBACK_AFTER = 0` 表示不兜底；
+- 动作参数包括 `STEPS_FORWARD = 400`、`STEP_US = 2000`、`FEED_HOLD_MS = 60000`、`FEED_HOPPER_MS = 10000`、`HOLD_DEENERGIZE = true`；
+- 串口 115200 输出 `#boot distance=...`、`#dist=...`、`#=== feed cycle start ===`、`#door open`、`#bowl out`、`#=== feed cycle done ===` 等日志。
+
+需要标明：**Arduino 固件源码、`setup()`/`loop()` 具体实现、舵机/步进实际动作顺序、超声波实际读取函数，在当前提供源码中未体现**，只能从 README 得知设计意图。
+
+---
+
+## 五、关键输入输出汇总
+
+- **K230 输入**：摄像头 GC2093 图像帧、`yolov8n_320.kmodel`、配置参数、可选 BUSY 电平。
+- **K230 输出**：MIPI 屏画面、GPIO42 持续电平（高=有动物）、HTTP POST 照片到 PC、串口日志、`/sdcard/.k230_boot` 启动状态文件。
+- **PC 输入**：HTTP 上传的 JPEG/PNG、查询参数、可选 token、Pillow 解码、可选 torch 特征模型。
+- **PC 输出**：`pc/data/images/日期/uuid.jpg` 和缩略图、`pc/data/visits.db`、`pc/data/server.log`、`/api/v1/overview` 等 JSON、网页和图片访问。
+- **Arduino 输入**：D2 触发电平、HC-SR04 回波。
+- **Arduino 输出**：D3/D5 舵机 PWM、D7-D10 L298N 步进控制、D6 可选 BUSY、115200 串口日志。
+
+---
+
+## 六、与项目描述的对应关系及未体现部分
+
+- “统计社区有多少流浪猫、流浪狗”：对应 PC 端 `individuals` 表、`visits` 表、`identity.py` 个体匹配和网页 `/api/v1/overview` 统计；但具体“多少只”的网页展示代码未提供。
+- “摄像头 K230 检测到猫狗”：对应 `yolov8n_320.kmodel`、COCO `LABELS`、`_class_ids_from_labels()` 和存在消抖配置；实际推理和主循环代码被截断，**未展示**。
+- “拍照上传到 PC 网站”：对应 `handle_visit()` 接收 JPEG、落盘、写库、返回 JSON；K230 端具体上传函数和 `SERVER_URL` 定义在截断部分**未展示**。
+- “网站记录哪只猫哪只狗什么时候过来”：对应 `visits.ts`、`individual_id`、`species`、`image`、`thumb`、`sim` 以及网页接口；个体自动识别存在误差，网页提供改名/合并/改挂人工纠正。
+- “上传之后通过硬件端放食物”：源码中 K230 的 GPIO 触发与 PC 上传是两路并行逻辑；Arduino 根据电平动作，不等待上传结果。Arduino 固件源码未提供，**放食动作的具体实现代码中未体现**，只能依据 README。
+- “会给它们放一些食物”：README 描述了舵机开门/出粮、步进推盆、超声波测粮和补粮周期；实际实验效果、准确率、成功率在源码中**未体现**。

@@ -1,0 +1,10 @@
+# 服务端运行时依赖（装到 venv 里，别装系统 Python）
+#
+# 这两个是硬依赖：
+#   Pillow  解 JPEG、生成缩略图
+#   numpy   手工特征做个体识别（没有 torch 时的兜底）
+#
+# 可选（想用 ResNet18 做个体识别再装，体积大概 +800MB）：
+#   torch torchvision
+Pillow>=9.0
+numpy>=1.21
